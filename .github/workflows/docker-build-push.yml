@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build, Push, and Deploy Docker Image
 
 on:
   push:
@@ -38,4 +38,29 @@ jobs:
             build.run_id=${{ github.run_id }}
             build.run_number=${{ github.run_number }}
 
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
 
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to EC2 via SSM Run Command
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy latest cs6620-app from GitHub Actions via SSM" \
+            --parameters commands='[
+              "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:latest",
+              "sudo docker stop cs6620-app || true",
+              "sudo docker rm cs6620-app || true",
+              "sudo docker run -d --name cs6620-app --restart unless-stopped -p 80:5000 ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:latest",
+              "sudo docker ps --format \"table {{.Names}}\t{{.Status}}\t{{.Ports}}\""
+            ]'
